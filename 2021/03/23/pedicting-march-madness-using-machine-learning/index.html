@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="generator" content="Hugo 0.81.0" />
+
+
+<title>Pedicting March Madness using Machine Learning - Macrae Maschka&#39;s Github Site</title>
+<meta property="og:title" content="Pedicting March Madness using Machine Learning - Macrae Maschka&#39;s Github Site">
+
+
+  <link href='/favicon.ico' rel='icon' type='image/x-icon'/>
+
+
+
+  
+
+
+
+
+
+
+
+
+<link href='//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/styles/github.min.css' rel='stylesheet' type='text/css' />
+
+
+
+<link rel="stylesheet" href="/css/fonts.css" media="all">
+<link rel="stylesheet" href="/css/main.css" media="all">
+
+
+
+  </head>
+  <body>
+    <div class="wrapper">
+      <header class="header">
+        <nav class="nav">
+  <a href="/" class="nav-logo">
+    <img src="/images/logo.png"
+         width="50"
+         height="50"
+         alt="Logo">
+  </a>
+
+  <ul class="nav-links">
+    
+    <li><a href="/about/">About</a></li>
+    
+    <li><a href="https://github.com/macraemaschka">GitHub</a></li>
+    
+    <li><a href="https://twitter.com/rstudio">Twitter</a></li>
+    
+  </ul>
+</nav>
+
+      </header>
+
+
+<main class="content" role="main">
+
+  <article class="article">
+    
+    <span class="article-duration">10 min read</span>
+    
+
+    <h1 class="article-title">Pedicting March Madness using Machine Learning</h1>
+
+    
+    <span class="article-date">2021-03-23</span>
+    
+
+    <div class="article-content">
+      
+<script src="/2021/03/23/pedicting-march-madness-using-machine-learning/index_files/header-attrs/header-attrs.js"></script>
+
+
+<p>As a project for my SPMC 460 Advanced Sports Data Analytics class, we were tasked to accurately predict the 2021 March Madness tournament. Each student was to come up with an algorithm that they though would best predict each game. We entered our brackets in to an ESPN bracket challenge to see which student had the top algorithm during this crazy COVID basketball season.</p>
+<p>What follows is the logic and code I used to fill out my bracket.</p>
+<div id="toolkit" class="section level2">
+<h2>Toolkit</h2>
+<p>We start out by feeding the model with the Tidyverse and Tidymodels libraries and the zoo library for presenting dates and times numerically.</p>
+<pre class="r"><code>library(tidyverse)</code></pre>
+<pre><code>## -- Attaching packages --------------------------------------- tidyverse 1.3.0 --</code></pre>
+<pre><code>## v ggplot2 3.3.3     v purrr   0.3.4
+## v tibble  3.0.6     v dplyr   1.0.3
+## v tidyr   1.1.2     v stringr 1.4.0
+## v readr   1.4.0     v forcats 0.5.1</code></pre>
+<pre><code>## -- Conflicts ------------------------------------------ tidyverse_conflicts() --
+## x dplyr::filter() masks stats::filter()
+## x dplyr::lag()    masks stats::lag()</code></pre>
+<pre class="r"><code>library(tidymodels)</code></pre>
+<pre><code>## -- Attaching packages -------------------------------------- tidymodels 0.1.2 --</code></pre>
+<pre><code>## v broom     0.7.4      v recipes   0.1.15
+## v dials     0.0.9      v rsample   0.0.8 
+## v infer     0.5.4      v tune      0.1.2 
+## v modeldata 0.1.0      v workflows 0.2.1 
+## v parsnip   0.1.5      v yardstick 0.0.7</code></pre>
+<pre><code>## -- Conflicts ----------------------------------------- tidymodels_conflicts() --
+## x scales::discard() masks purrr::discard()
+## x dplyr::filter()   masks stats::filter()
+## x recipes::fixed()  masks stringr::fixed()
+## x dplyr::lag()      masks stats::lag()
+## x yardstick::spec() masks readr::spec()
+## x recipes::step()   masks stats::step()</code></pre>
+<pre class="r"><code>library(zoo)</code></pre>
+<pre><code>## 
+## Attaching package: &#39;zoo&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:base&#39;:
+## 
+##     as.Date, as.Date.numeric</code></pre>
+<pre class="r"><code>library(kableExtra)</code></pre>
+<pre><code>## Warning: package &#39;kableExtra&#39; was built under R version 4.0.4</code></pre>
+<pre><code>## 
+## Attaching package: &#39;kableExtra&#39;</code></pre>
+<pre><code>## The following object is masked from &#39;package:dplyr&#39;:
+## 
+##     group_rows</code></pre>
+<pre class="r"><code>set.seed(1234)</code></pre>
+</div>
+<div id="feature-engineering" class="section level2">
+<h2>Feature Engineering</h2>
+<p>The data I’m using is scraped from Sports Reference and it’s the box scores of every Division I college basketball game since the start of the 2014-2015 season. Since Division I teams play each other, our data has two of each game; one for the team and one for the opponent.</p>
+<p>When looking into predictors, I knew that team offensive and defensive efficiency is important, so I estimated the number of possessions and then calculated offensive and defensive ratings (which is points per 100 possessions).</p>
+<p>I used the teams cumulative mean over the course of the season to estimate what a team would look like going into the game. Obviously, we can’t exactly predict how a team will play that game but using a cumulative mean will determine if a team has been playing good or bad up to that game.</p>
+<p>I ran a couple brackets just using a teams last 10 games of the season, hoping to show how a team is playing going into the tournament, but I did not do that for this particular bracket. I leaned to trust the results of the full season averages a tad more.</p>
+<p>That was my though going in.</p>
+<pre class="r"><code>games &lt;- read_csv(&quot;cbblogs1521.csv&quot;) %&gt;% mutate(
+  Possessions = .5*(TeamFGA - TeamOffRebounds + TeamTurnovers + (.475 * TeamFTA)) + .5*(OpponentFGA - OpponentOffRebounds + OpponentTurnovers + (.475 * OpponentFTA)),
+  OffensiveRating = (TeamScore/Possessions)*100, 
+  DefensiveRating = (OpponentScore/Possessions)*100
+  ) %&gt;%
+  group_by(Team, Season) %&gt;%
+  mutate(
+  Cumulative_Pace = cummean(Possessions),
+  Cumulative_Mean_Offensive = cummean(OffensiveRating),
+  Cumulative_Mean_Defensive = cummean(DefensiveRating)
+  ) %&gt;% 
+  mutate(
+    Location = case_when(
+    str_trim(HomeAway) == &quot;@&quot; ~ &quot;A&quot;,
+    str_trim(HomeAway) == &quot;N&quot; ~ &quot;N&quot;,
+    TRUE ~ &quot;H&quot;
+  ),
+ Outcome = case_when(
+  grepl(&quot;W&quot;, W_L) ~ &quot;W&quot;, 
+  grepl(&quot;L&quot;, W_L) ~ &quot;L&quot;
+ )
+) %&gt;%
+  mutate(Outcome = as.factor(Outcome)) </code></pre>
+<pre><code>## 
+## -- Column specification --------------------------------------------------------
+## cols(
+##   .default = col_double(),
+##   Season = col_character(),
+##   Date = col_date(format = &quot;&quot;),
+##   TeamFull = col_character(),
+##   Opponent = col_character(),
+##   HomeAway = col_character(),
+##   W_L = col_character(),
+##   URL = col_character(),
+##   Conference = col_character(),
+##   Team = col_character()
+## )
+## i Use `spec()` for the full column specifications.</code></pre>
+<p>One big predictor for my bracket was veteran status. My idea for this NCAA basketball season was that with no fans in attendance, the more veterans a team had, the more games they’d win. We saw this first hand with teams like Duke, North Carolina and Kentuky all having down years. Young teams haven’t had the time to clique together. They don’t have that experience.</p>
+<p>I scraped a data frame of every player that has played since the 2013 season. I then talleyed out each teams number of Juniors and Seniors and added that to the rest of our data.</p>
+<pre class="r"><code>players &lt;- read_csv(&quot;~/SPMC 460/cbbplayers1321.csv&quot;)</code></pre>
+<pre><code>## 
+## -- Column specification --------------------------------------------------------
+## cols(
+##   .default = col_double(),
+##   Season = col_character(),
+##   Conference = col_character(),
+##   Team = col_character(),
+##   Player = col_character(),
+##   Class = col_character(),
+##   Pos = col_character(),
+##   Height = col_character(),
+##   Hometown = col_character(),
+##   `High School` = col_character(),
+##   Summary = col_character()
+## )
+## i Use `spec()` for the full column specifications.</code></pre>
+<pre class="r"><code>vets &lt;- players %&gt;% filter(Class == &quot;JR&quot; | Class == &quot;SR&quot;) %&gt;% group_by(Team, Season) %&gt;% tally()</code></pre>
+<pre class="r"><code>games &lt;- games %&gt;% left_join(vets, by=c(&quot;TeamFull&quot; = &quot;Team&quot;, &quot;Season&quot;))</code></pre>
+<pre class="r"><code>games &lt;- games %&gt;% plyr::rename(c(&quot;n&quot; = &quot;Veterans&quot;))</code></pre>
+<p>Then, to get both sides of a match-up to be the correct stats, I used joining to combine them into a single dataset with the cumulative stats, team simple rating system that takes into account average point differential and strength of schedule, and the number of veterans.</p>
+<pre class="r"><code>selectedgames &lt;- games %&gt;% select(Season, Team, Date, Opponent, Outcome, Cumulative_Mean_Offensive, Cumulative_Mean_Defensive, TeamSRS, TeamSOS, Cumulative_Pace, Veterans)</code></pre>
+<pre class="r"><code>opponentgames &lt;- selectedgames %&gt;% select(-Opponent) %&gt;% rename(Opponent = Team, Opponent_Cumulative_Offensive = Cumulative_Mean_Offensive, Opponent_Cumulative_Mean_Defensive = Cumulative_Mean_Defensive, OpponentSRS = TeamSRS, OpponentSOS = TeamSOS, Opponent_Cumulative_Pace = Cumulative_Pace, OpponentVeterans = Veterans)</code></pre>
+<pre class="r"><code>bothsides &lt;- selectedgames %&gt;% left_join(opponentgames, by=c(&quot;Opponent&quot;, &quot;Date&quot;, &quot;Season&quot;)) %&gt;% na.omit() %&gt;% select(-Outcome.y) %&gt;% rename(Outcome = Outcome.x)</code></pre>
+</div>
+<div id="modeling-with-tidymodels" class="section level2">
+<h2>Modeling with Tidymodels</h2>
+<p>We learned that for us to get the most accurate look at how our models turn out, we want to split the randomness up. We make 80% of the outcomes a training split and 20% a test split.</p>
+<pre class="r"><code>log_split &lt;- initial_split(bothsides, prop = .8)
+log_train &lt;- training(log_split)
+log_test &lt;- testing(log_split)</code></pre>
+<p>I then created a simple recipe, which doesn’t do much except set aside some fields as ID fields instead of making them predictors.</p>
+<pre class="r"><code>log_recipe &lt;- 
+  recipe(Outcome ~ ., data = log_train) %&gt;% 
+  update_role(Team, Opponent, Date, Season, new_role = &quot;ID&quot;) %&gt;%
+  step_normalize(all_predictors())
+
+summary(log_recipe)</code></pre>
+<pre><code>## # A tibble: 17 x 4
+##    variable                           type    role      source  
+##    &lt;chr&gt;                              &lt;chr&gt;   &lt;chr&gt;     &lt;chr&gt;   
+##  1 Season                             nominal ID        original
+##  2 Team                               nominal ID        original
+##  3 Date                               date    ID        original
+##  4 Opponent                           nominal ID        original
+##  5 Cumulative_Mean_Offensive          numeric predictor original
+##  6 Cumulative_Mean_Defensive          numeric predictor original
+##  7 TeamSRS                            numeric predictor original
+##  8 TeamSOS                            numeric predictor original
+##  9 Cumulative_Pace                    numeric predictor original
+## 10 Veterans                           numeric predictor original
+## 11 Opponent_Cumulative_Offensive      numeric predictor original
+## 12 Opponent_Cumulative_Mean_Defensive numeric predictor original
+## 13 OpponentSRS                        numeric predictor original
+## 14 OpponentSOS                        numeric predictor original
+## 15 Opponent_Cumulative_Pace           numeric predictor original
+## 16 OpponentVeterans                   numeric predictor original
+## 17 Outcome                            nominal outcome   original</code></pre>
+<p>I then have to define my model. I use random forest for two reasons. 1. I liked how my Big10 tournament predictions turned out when I used random forest. 2. I have and HP computer that wont allow me to run an XGBoost.</p>
+<p>We use “ranger” engine to help speed up the process.</p>
+<pre class="r"><code>log_mod &lt;- 
+  rand_forest() %&gt;% 
+  set_engine(&quot;ranger&quot;) %&gt;%
+  set_mode(&quot;classification&quot;)</code></pre>
+<p>With the recipe and model defined, I can create a workflow, which will handle a lot of the backside work for me.</p>
+<pre class="r"><code>log_workflow &lt;- 
+  workflow() %&gt;% 
+  add_model(log_mod) %&gt;% 
+  add_recipe(log_recipe)</code></pre>
+<p>This is where all the magic happens. Our workflow is set and it is now time to run our algorithm. We fit our data to use later on.</p>
+<pre class="r"><code>log_fit &lt;- 
+  log_workflow %&gt;% 
+  fit(data = log_train)</code></pre>
+</div>
+<div id="evaluating-the-model" class="section level2">
+<h2>Evaluating the Model</h2>
+<p>Let’s check how we did. We how our trained data that should turn out very accurate if you do this right. We can see that we predicted Abilene Christian’s 2014-15 Season extremely accurately.</p>
+<p>This could be interesting. Lets see how we do.</p>
+<pre class="r"><code>trainpredict &lt;- log_fit %&gt;% predict(new_data = log_train) %&gt;%
+  bind_cols(log_train)
+
+trainpredict</code></pre>
+<pre><code>## # A tibble: 38,537 x 18
+##    .pred_class Season Team  Date       Opponent Outcome Cumulative_Mean~
+##    &lt;fct&gt;       &lt;chr&gt;  &lt;chr&gt; &lt;date&gt;     &lt;chr&gt;    &lt;fct&gt;              &lt;dbl&gt;
+##  1 L           2014-~ Abil~ 2014-11-19 Tulsa    L                   94.9
+##  2 L           2014-~ Abil~ 2014-11-22 Duquesne L                   97.4
+##  3 L           2014-~ Abil~ 2014-11-29 UC-Rive~ L                   98.7
+##  4 W           2014-~ Abil~ 2014-12-04 Sacrame~ W                  100. 
+##  5 L           2014-~ Abil~ 2014-12-06 Houston  L                   98.7
+##  6 L           2014-~ Abil~ 2014-12-17 Loyola ~ L                   95.7
+##  7 W           2014-~ Abil~ 2014-12-23 Arkansa~ W                   92.9
+##  8 L           2014-~ Abil~ 2014-12-28 Grand C~ L                   94.0
+##  9 W           2014-~ Abil~ 2015-01-04 Central~ W                   96.0
+## 10 W           2014-~ Abil~ 2015-01-10 Nicholl~ W                   96.3
+## # ... with 38,527 more rows, and 11 more variables:
+## #   Cumulative_Mean_Defensive &lt;dbl&gt;, TeamSRS &lt;dbl&gt;, TeamSOS &lt;dbl&gt;,
+## #   Cumulative_Pace &lt;dbl&gt;, Veterans &lt;int&gt;, Opponent_Cumulative_Offensive &lt;dbl&gt;,
+## #   Opponent_Cumulative_Mean_Defensive &lt;dbl&gt;, OpponentSRS &lt;dbl&gt;,
+## #   OpponentSOS &lt;dbl&gt;, Opponent_Cumulative_Pace &lt;dbl&gt;, OpponentVeterans &lt;int&gt;</code></pre>
+</div>
+<div id="play-in-games" class="section level2">
+<h2>Play In Games</h2>
+<p>Because my notebook is over 900 lines of code long, I don’t want to drag this on. I will show you an example of how we did with the first four play in games.</p>
+<p>To do this, I needed to make a tibble of the games, with the team and opponent. The date doesn’t matter, but it’s needed because my model is expecting it.</p>
+<p>Then, I need to get the right data for each team and join it to them so each game has the predictors the model is expecting. Then, using the model, we can predict the outcome.</p>
+<pre class="r"><code> games &lt;- tibble(
+  Team=&quot;Norfolk State&quot;,
+  Opponent=&quot;Appalachian State&quot;,
+  Date = as.Date(&quot;2021-03-18&quot;)
+) %&gt;% add_row(
+  Team=&quot;Wichita State&quot;,
+  Opponent=&quot;Drake&quot;,
+  Date = as.Date(&quot;2021-03-18&quot;)
+) %&gt;% add_row(
+  Team=&quot;Mount St. Mary&#39;s&quot;,
+  Opponent=&quot;Texas Southern&quot;,
+  Date = as.Date(&quot;2021-03-18&quot;)
+) %&gt;% add_row(
+  Team=&quot;Michigan State&quot;,
+  Opponent=&quot;UCLA&quot;,
+  Date = as.Date(&quot;2021-03-18&quot;)
+)
+
+games &lt;- selectedgames %&gt;% group_by(Team) %&gt;% filter(Date == max(Date)) %&gt;% select(-Date, -Opponent, -Outcome) %&gt;% right_join(games)</code></pre>
+<pre><code>## Joining, by = &quot;Team&quot;</code></pre>
+<pre class="r"><code>games &lt;- opponentgames %&gt;% group_by(Opponent) %&gt;% filter(Date == max(Date)) %&gt;% ungroup()  %&gt;% select(-Season, -Date, -Outcome) %&gt;% right_join(games, by=c(&quot;Opponent&quot;)) %&gt;% select(Team, everything())
+
+firstround &lt;- log_fit %&gt;% predict(new_data = games) %&gt;%
+  bind_cols(games) 
+
+log_fit %&gt;% predict(new_data = firstround, type=&quot;prob&quot;) %&gt;%
+  bind_cols(firstround)</code></pre>
+<pre><code>## # A tibble: 4 x 19
+##   .pred_L .pred_W .pred_class Team  Opponent Opponent_Cumula~ Opponent_Cumula~
+##     &lt;dbl&gt;   &lt;dbl&gt; &lt;fct&gt;       &lt;chr&gt; &lt;chr&gt;               &lt;dbl&gt;            &lt;dbl&gt;
+## 1   0.552   0.448 L           Norf~ Appalac~            103.              94.3
+## 2   0.473   0.527 W           Wich~ Drake               113.              95.4
+## 3   0.381   0.619 W           Moun~ Texas S~             98.9             92.9
+## 4   0.585   0.415 L           Mich~ UCLA                107.             101. 
+## # ... with 12 more variables: OpponentSRS &lt;dbl&gt;, OpponentSOS &lt;dbl&gt;,
+## #   Opponent_Cumulative_Pace &lt;dbl&gt;, OpponentVeterans &lt;int&gt;, Season &lt;chr&gt;,
+## #   Cumulative_Mean_Offensive &lt;dbl&gt;, Cumulative_Mean_Defensive &lt;dbl&gt;,
+## #   TeamSRS &lt;dbl&gt;, TeamSOS &lt;dbl&gt;, Cumulative_Pace &lt;dbl&gt;, Veterans &lt;int&gt;,
+## #   Date &lt;date&gt;</code></pre>
+<p>Since these games have already happened, we know the outcome, and my model got 1 of 4 correct. We missed them all except for UCLA beating Michigan State.</p>
+<p>If were be honest, this isn’t looking good.</p>
+</div>
+<div id="hows-it-going" class="section level2">
+<h2>How’s it going?</h2>
+<p>We have just finished the round 2 and the Sweet 16 is set. After only predicting 25 percent of the First Four, my bracket is better than 81 percent of brackets on ESPN, which puts me in 2.8 millionth place, give or take. The best part about it is that the best is yet to come. All four of my Final Four teams are still in the tournament and are all balling out. Now we just have to hope that statistics and veteran status plays out for us in the final rounds.</p>
+<p>When everything is all done and said, I will come back and reevaluate how we did. Here are screenshots of my bracket.</p>
+<div class="figure">
+<img src="west_south.png" alt="" />
+<p class="caption">West and South</p>
+</div>
+<div class="figure">
+<img src="east_midwest.png" alt="" />
+<p class="caption">East and Midwest</p>
+</div>
+</div>
+
+    </div>
+  </article>
+
+  
+
+
+</main>
+
+      <footer class="footer">
+        <ul class="footer-links">
+          <li>
+            <a href="/index.xml" type="application/rss+xml" target="_blank">RSS feed</a>
+          </li>
+          <li>
+            <a href="https://gohugo.io/" class="footer-links-kudos">Made with <img src="/images/hugo-logo.png" alt="Img link to Hugo website" width="22" height="22"></a>
+          </li>
+        </ul>
+      </footer>
+
+    </div>
+    
+
+
+
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/highlight.min.js"></script>
+
+
+
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/r.min.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.12.0/languages/yaml.min.js"></script>
+<script>hljs.configure({languages: []}); hljs.initHighlightingOnLoad();</script>
+
+
+
+    
+
+    
+  </body>
+</html>
+
